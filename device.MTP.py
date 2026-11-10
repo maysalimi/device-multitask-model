@@ -1,127 +1,192 @@
+
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+66
+67
+68
+69
+70
+71
+72
+73
+74
+75
+76
+77
+78
+79
+80
+81
+82
+83
+84
+85
+86
+87
+88
+89
+90
+91
+92
+93
+94
+95
+96
+"""
+StudentLife App Usage Analysis
+------------------------------
+Predicts RUNNING_TASKS_numRunning from app-usage features.
+
+Expected project layout:
+    data/app_usage/running_app_u00.csv
+
+Run from the project root:
+    python device.MTP.py
+"""
+
+from pathlib import Path
+
+import joblib
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+
+from sklearn.compose import ColumnTransformer
+from sklearn.dummy import DummyRegressor
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.impute import SimpleImputer
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import GridSearchCV, train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
+
+
+# ---------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------
+
+PROJECT_DIR = Path(__file__).resolve().parent
+DATA_PATH = PROJECT_DIR / "data" / "app_usage" / "running_app_u00.csv"
+FIGURES_DIR = PROJECT_DIR / "figures"
+MODELS_DIR = PROJECT_DIR / "models"
+
+TARGET_COLUMN = "RUNNING_TASKS_numRunning"
+TEST_SIZE = 0.20
+RANDOM_STATE = 42
+CV_FOLDS = 3
+
+# Identifiers and raw activity labels are excluded, as in the original
+# analysis. Columns are dropped only if they exist in the CSV.
+COLUMNS_TO_DROP = [
+    "id",
+    "device",
+    "timestamp",
+    "RUNNING_TASKS_baseActivity_mClass",
+    "RUNNING_TASKS_baseActivity_mPackage",
     "RUNNING_TASKS_topActivity_mClass",
     "RUNNING_TASKS_topActivity_mPackage",
 ]
 
-app_usage_df = app_usage_df.drop(
-    columns=[column for column in columns_to_drop if column in app_usage_df.columns]
-)
+
+# ---------------------------------------------------------------------
+# Load and prepare data
+# ---------------------------------------------------------------------
+
+def load_data(path: Path) -> pd.DataFrame:
+    """Load the CSV and create time-derived features."""
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Dataset not found: {path}\n"
+            "Download the StudentLife dataset and place "
+            "running_app_u00.csv in data/app_usage/."
+        )
+
+    df = pd.read_csv(path)
+
+    if TARGET_COLUMN not in df.columns:
+        raise ValueError(
+            f"Target column '{TARGET_COLUMN}' was not found. "
+            f"Available columns: {list(df.columns)}"
+        )
+
+    # Derive time features before dropping the original timestamp.
+    if "timestamp" in df.columns:
+        timestamp = pd.to_datetime(df["timestamp"], errors="coerce")
+        df["hour"] = timestamp.dt.hour
+        df["weekday"] = timestamp.dt.weekday
+
+    df = df.drop(
+        columns=[column for column in COLUMNS_TO_DROP if column in df.columns]
+    )
+
+    # A row without a target cannot be used for supervised learning.
+    df = df.dropna(subset=[TARGET_COLUMN]).copy()
+
+    return df
 
 
-# Standardize numeric features
-numeric_columns = app_usage_df.select_dtypes(include="number").columns
-scaler = StandardScaler()
-app_usage_df[numeric_columns] = scaler.fit_transform(app_usage_df[numeric_columns])
-
-
-# Explore feature correlations
-correlation_matrix = app_usage_df.corr(numeric_only=True)
-
-plt.figure(figsize=(12, 8))
-sns.heatmap(
-    correlation_matrix,
-    annot=True,
-    cmap="coolwarm",
-    fmt=".2f",
-    linewidths=0.5,
-)
-plt.tight_layout()
-plt.show()
-
-
-# Define features and target
-target_column = "RUNNING_TASKS_numRunning"
-X = app_usage_df.drop(columns=[target_column])
-y = app_usage_df[target_column]
-
-
-# Split into training and test sets
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.2,
-    random_state=42,
-)
-
-
-# Train a Random Forest regression model
-rf_model = RandomForestRegressor(random_state=42)
-rf_model.fit(X_train, y_train)
-
-
-# Evaluate with cross-validation
-cv_scores = cross_val_score(
-    rf_model,
-    X_train,
-    y_train,
-    cv=5,
-    scoring="neg_mean_squared_error",
-)
-
-mse_scores = -cv_scores
-print("MSE across folds:", mse_scores)
-print("Average MSE:", np.mean(mse_scores))
-
-
-# Evaluate on the test set
-y_pred = rf_model.predict(X_test)
-
-mse_test = mean_squared_error(y_test, y_pred)
-r2_test = r2_score(y_test, y_pred)
-
-print("Test MSE:", mse_test)
-print("Test R²:", r2_test)
-
-
-# Display feature importance
-feature_importances = rf_model.feature_importances_
-sorted_indices = np.argsort(feature_importances)[::-1]
-
-for index in sorted_indices:
-    print(f"{X_train.columns[index]}: {feature_importances[index]}")
-
-
-# Tune Random Forest hyperparameters
-param_grid = {
-    "n_estimators": [100, 200, 300],
-    "max_depth": [10, 20, 30],
-    "min_samples_split": [2, 5, 10],
-    "min_samples_leaf": [1, 2, 4],
-}
-
-grid_search = GridSearchCV(
-    estimator=RandomForestRegressor(random_state=42),
-    param_grid=param_grid,
-    cv=3,
-    n_jobs=-1,
-    verbose=2,
-    scoring="neg_mean_squared_error",
-)
-
-grid_search.fit(X_train, y_train)
-
-best_rf_model = grid_search.best_estimator_
-y_pred_best = best_rf_model.predict(X_test)
-
-print("Best parameters:", grid_search.best_params_)
-print("Best model test MSE:", mean_squared_error(y_test, y_pred_best))
-print("Best model test R²:", r2_score(y_test, y_pred_best))
-
-
-# Save the trained model
-joblib.dump(best_rf_model, "random_forest_model.pkl")
-
-
-# Compare actual and predicted values
-plt.figure(figsize=(7, 6))
-plt.scatter(y_test, y_pred, alpha=0.5)
-plt.plot(
-    [y_test.min(), y_test.max()],
-    [y_test.min(), y_test.max()],
-    "k--",
-    linewidth=2,
-)
-plt.xlabel("Actual")
-plt.ylabel("Predicted")
-plt.title("Actual vs. Predicted Values")
-plt.tight_layout()
-plt.show()
+def create_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
+    """Build preprocessing that is fitted only on training folds."""
